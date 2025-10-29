@@ -1,0 +1,151 @@
+name: "Reusable Docker Build"
+
+on:
+  workflow_call:
+    inputs:
+      target:
+        description: "Build target (buildbase, ci-container, user-service, etc.)"
+        required: true
+        type: string
+      platforms:
+        description: "Platforms to build for (e.g., linux/amd64,linux/arm64)"
+        required: false
+        type: string
+        default: "linux/amd64"
+      build-args:
+        description: "Additional build arguments"
+        required: false
+        type: string
+        default: ""
+      push:
+        description: "Push images to registry"
+        required: false
+        type: boolean
+        default: true
+      tag:
+        description: "Image tag"
+        required: false
+        type: string
+        default: "latest"
+    secrets:
+      DOCKERHUB_USER:
+        required: false
+      DOCKERHUB_PASS:
+        required: false
+      GHCR_TOKEN:
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: all
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            image=moby/buildkit:latest
+          buildkitd-flags: |
+            --allow-insecure-entitlement security.insecure
+            --allow-insecure-entitlement network.host
+
+      - name: Login to DockerHub
+        if: ${{ secrets.DOCKERHUB_USER != '' && secrets.DOCKERHUB_PASS != '' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_PASS }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Read version files
+        id: versions
+        run: |
+          echo "go_version=$(cat versions/GO_VERSION)" >> $GITHUB_OUTPUT
+          echo "golangci_lint_version=$(cat versions/GOLANGCI_LINT_VERSION)" >> $GITHUB_OUTPUT
+          echo "protoc_version=$(cat versions/PROTOC_VERSION)" >> $GITHUB_OUTPUT
+          echo "buf_version=$(cat versions/BUF_VERSION)" >> $GITHUB_OUTPUT
+          echo "kubectl_version=$(cat versions/KUBECTL_VERSION)" >> $GITHUB_OUTPUT
+          echo "docker_version=$(cat versions/DOCKER_VERSION)" >> $GITHUB_OUTPUT
+
+      - name: Determine Dockerfile path
+        id: dockerfile
+        run: |
+          case "${{ inputs.target }}" in
+            buildbase)
+              echo "path=dockers/buildbase/Dockerfile" >> $GITHUB_OUTPUT
+              ;;
+            ci-container)
+              echo "path=dockers/ci/base/Dockerfile" >> $GITHUB_OUTPUT
+              ;;
+            user-service)
+              echo "path=cmd/user-service/Dockerfile" >> $GITHUB_OUTPUT
+              ;;
+            config-service)
+              echo "path=cmd/config-service/Dockerfile" >> $GITHUB_OUTPUT
+              ;;
+            *)
+              echo "Unknown target: ${{ inputs.target }}"
+              exit 1
+              ;;
+          esac
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ github.repository_owner }}/monorepo-go-example-${{ inputs.target }}
+            ghcr.io/${{ github.repository_owner }}/monorepo-go-example-${{ inputs.target }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=${{ inputs.tag }}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ steps.dockerfile.outputs.path }}
+          platforms: ${{ inputs.platforms }}
+          push: ${{ inputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: |
+            type=gha,scope=${{ inputs.target }}-buildcache
+            type=registry,ref=ghcr.io/${{ github.repository_owner }}/monorepo-go-example-${{ inputs.target }}:buildcache
+          cache-to: |
+            type=gha,scope=${{ inputs.target }}-buildcache,mode=max
+            type=registry,ref=ghcr.io/${{ github.repository_owner }}/monorepo-go-example-${{ inputs.target }}:buildcache,mode=max
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+            GO_VERSION=${{ steps.versions.outputs.go_version }}
+            GOLANGCI_LINT_VERSION=${{ steps.versions.outputs.golangci_lint_version }}
+            PROTOC_VERSION=${{ steps.versions.outputs.protoc_version }}
+            BUF_VERSION=${{ steps.versions.outputs.buf_version }}
+            KUBECTL_VERSION=${{ steps.versions.outputs.kubectl_version }}
+            DOCKER_VERSION=${{ steps.versions.outputs.docker_version }}
+            ${{ inputs.build-args }}
+
+      - name: Image digest
+        run: echo ${{ steps.meta.outputs.tags }}

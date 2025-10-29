@@ -1,0 +1,34 @@
+name: "Build Docker Image: Buildbase"
+
+on:
+  schedule:
+    - cron: "0 0 * * 0"  # Weekly build on Sunday
+  push:
+    branches:
+      - "main"
+    tags:
+      - "*.*.*"
+      - "v*.*.*"
+  pull_request:
+    paths:
+      - ".github/workflows/docker-buildbase.yml"
+      - ".github/workflows/_docker-build.yml"
+      - "dockers/buildbase/Dockerfile"
+      - "versions/GO_VERSION"
+      - "Makefile"
+
+jobs:
+  build:
+    uses: "./.github/workflows/_docker-build.yml"
+    with:
+      target: "buildbase"
+      platforms: "linux/amd64,linux/arm64"
+      build-args: |
+        GO_VERSION=${{ github.event.inputs.go_version || '1.21.0' }}
+    permissions:
+      contents: read
+      packages: write
+    secrets:
+      DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
+      DOCKERHUB_PASS: ${{ secrets.DOCKERHUB_PASS }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}

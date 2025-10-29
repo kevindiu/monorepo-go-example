@@ -1,0 +1,179 @@
+{{/*
+Copyright (C) 2025 Kevin Diu <kevindiujp@gmail.com>
+
+Licensed under the Apache License, Version 2.0 (the "License");
+You may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+   https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/}}
+
+{{- if .Values.orderService.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "monorepo-go-example.labels" . | nindent 4 }}
+    app: order-service
+    version: v1
+spec:
+  replicas: {{ .Values.orderService.replicaCount }}
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+        version: v1
+      annotations:
+        {{- if .Values.monitoring.prometheus.enabled }}
+        prometheus.io/scrape: {{ .Values.monitoring.prometheus.scrape | quote }}
+        prometheus.io/port: {{ .Values.orderService.service.httpPort | quote }}
+        prometheus.io/path: {{ .Values.monitoring.prometheus.path | quote }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "monorepo-go-example.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: order-service
+        image: {{ include "monorepo-go-example.image" (dict "Values" .Values "repository" .Values.orderService.image.repository "tag" .Values.orderService.image.tag) }}
+        imagePullPolicy: {{ .Values.orderService.image.pullPolicy }}
+        ports:
+        - containerPort: {{ .Values.orderService.service.httpPort }}
+          name: http
+          protocol: TCP
+        - containerPort: {{ .Values.orderService.service.grpcPort }}
+          name: grpc
+          protocol: TCP
+        env:
+        - name: SERVER_HOST
+          value: "0.0.0.0"
+        - name: SERVER_PORT
+          value: {{ .Values.orderService.service.httpPort | quote }}
+        - name: SERVER_GRPC_PORT
+          value: {{ .Values.orderService.service.grpcPort | quote }}
+        - name: DATABASE_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "monorepo-go-example.fullname" . }}-config
+              key: database.host
+        - name: DATABASE_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "monorepo-go-example.fullname" . }}-config
+              key: database.port
+        - name: DATABASE_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "monorepo-go-example.fullname" . }}-config
+              key: database.name
+        - name: DATABASE_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "monorepo-go-example.fullname" . }}-secrets
+              key: database.user
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "monorepo-go-example.fullname" . }}-secrets
+              key: database.password
+        - name: DATABASE_SSL_MODE
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "monorepo-go-example.fullname" . }}-config
+              key: database.ssl_mode
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "monorepo-go-example.fullname" . }}-config
+              key: log.level
+        - name: LOG_FORMAT
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "monorepo-go-example.fullname" . }}-config
+              key: log.format
+        - name: USER_SERVICE_ENDPOINT
+          value: "user-service:{{ .Values.userService.service.grpcPort }}"
+        livenessProbe:
+          {{- toYaml .Values.orderService.livenessProbe | nindent 10 }}
+        readinessProbe:
+          {{- toYaml .Values.orderService.readinessProbe | nindent 10 }}
+        resources:
+          {{- toYaml .Values.orderService.resources | nindent 10 }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "monorepo-go-example.labels" . | nindent 4 }}
+    app: order-service
+spec:
+  type: {{ .Values.orderService.service.type }}
+  ports:
+  - port: {{ .Values.orderService.service.httpPort }}
+    targetPort: {{ .Values.orderService.service.httpPort }}
+    protocol: TCP
+    name: http
+  - port: {{ .Values.orderService.service.grpcPort }}
+    targetPort: {{ .Values.orderService.service.grpcPort }}
+    protocol: TCP
+    name: grpc
+  selector:
+    app: order-service
+{{- if .Values.orderService.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: order-service-hpa
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "monorepo-go-example.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: order-service
+  minReplicas: {{ .Values.orderService.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.orderService.autoscaling.maxReplicas }}
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.orderService.autoscaling.targetCPUUtilizationPercentage }}
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.orderService.autoscaling.targetMemoryUtilizationPercentage }}
+{{- end }}
+{{- end }}

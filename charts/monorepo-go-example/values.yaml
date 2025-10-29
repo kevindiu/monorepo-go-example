@@ -1,0 +1,257 @@
+#
+# Copyright (C) 2025 Kevin Diu <kevindiujp@gmail.com>
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# Default values for monorepo-go-example.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# Global settings
+global:
+  imageRegistry: ghcr.io
+  imagePullSecrets: []
+  storageClass: ""
+
+# Namespace configuration
+namespace:
+  name: monorepo
+  labels:
+    environment: production
+
+# Service Account
+serviceAccount:
+  create: true
+  name: monorepo-sa
+  annotations: {}
+
+# RBAC
+rbac:
+  create: true
+
+# ConfigMap settings
+config:
+  database:
+    host: postgres-service
+    port: "5432"
+    name: monorepo
+    sslMode: disable
+  log:
+    level: info
+    format: json
+  server:
+    mode: production
+
+# Secrets (these should be overridden in production)
+secrets:
+  database:
+    user: postgres
+    password: changeme
+
+# PostgreSQL
+postgresql:
+  enabled: true
+  image:
+    registry: docker.io
+    repository: postgres
+    tag: "13"
+    pullPolicy: IfNotPresent
+  persistence:
+    enabled: true
+    storageClass: ""
+    size: 10Gi
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  service:
+    type: ClusterIP
+    port: 5432
+
+# User Service
+userService:
+  enabled: true
+  replicaCount: 3
+  image:
+    repository: kevindiu/monorepo-go-example/user-service
+    tag: latest
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    httpPort: 8081
+    grpcPort: 9091
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8081
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 8081
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# Order Service
+orderService:
+  enabled: true
+  replicaCount: 3
+  image:
+    repository: kevindiu/monorepo-go-example/order-service
+    tag: latest
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    httpPort: 8082
+    grpcPort: 9092
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8082
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 8082
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# Gateway Service
+gateway:
+  enabled: true
+  replicaCount: 3
+  image:
+    repository: kevindiu/monorepo-go-example/gateway
+    tag: latest
+    pullPolicy: Always
+  service:
+    type: LoadBalancer
+    httpPort: 80
+    grpcPort: 9090
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 15
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# Ingress
+ingress:
+  enabled: false
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: api.monorepo.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: gateway-tls
+      hosts:
+        - api.monorepo.example.com
+
+# Security Context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+    - ALL
+
+# Monitoring
+monitoring:
+  prometheus:
+    enabled: true
+    scrape: true
+    port: 8080
+    path: /metrics
+
+# Node selector
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity
+affinity: {}

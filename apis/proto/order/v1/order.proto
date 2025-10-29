@@ -1,0 +1,133 @@
+syntax = "proto3";
+
+package order.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/kevindiu/monorepo-go-example/apis/grpc/order/v1;orderv1";
+
+// OrderStatus represents the status of an order
+enum OrderStatus {
+  ORDER_STATUS_UNSPECIFIED = 0;
+  ORDER_STATUS_PENDING = 1;
+  ORDER_STATUS_CONFIRMED = 2;
+  ORDER_STATUS_SHIPPED = 3;
+  ORDER_STATUS_DELIVERED = 4;
+  ORDER_STATUS_CANCELLED = 5;
+}
+
+// OrderItem represents an item in an order
+message OrderItem {
+  string id = 1;
+  string product_id = 2;
+  string product_name = 3;
+  int32 quantity = 4;
+  double price = 5;
+}
+
+// Order represents an order in the system
+message Order {
+  string id = 1;
+  string user_id = 2;
+  repeated OrderItem items = 3;
+  double total_amount = 4;
+  OrderStatus status = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+// CreateOrderRequest is the request message for CreateOrder
+message CreateOrderRequest {
+  string user_id = 1;
+  repeated OrderItem items = 2;
+}
+
+// CreateOrderResponse is the response message for CreateOrder
+message CreateOrderResponse {
+  Order order = 1;
+}
+
+// GetOrderRequest is the request message for GetOrder
+message GetOrderRequest {
+  string id = 1;
+}
+
+// GetOrderResponse is the response message for GetOrder
+message GetOrderResponse {
+  Order order = 1;
+}
+
+// ListOrdersRequest is the request message for ListOrders
+message ListOrdersRequest {
+  string user_id = 1;
+  int32 page_size = 2;
+  string page_token = 3;
+}
+
+// ListOrdersResponse is the response message for ListOrders
+message ListOrdersResponse {
+  repeated Order orders = 1;
+  string next_page_token = 2;
+}
+
+// UpdateOrderStatusRequest is the request message for UpdateOrderStatus
+message UpdateOrderStatusRequest {
+  string id = 1;
+  OrderStatus status = 2;
+}
+
+// UpdateOrderStatusResponse is the response message for UpdateOrderStatus
+message UpdateOrderStatusResponse {
+  Order order = 1;
+}
+
+// CancelOrderRequest is the request message for CancelOrder
+message CancelOrderRequest {
+  string id = 1;
+}
+
+// CancelOrderResponse is the response message for CancelOrder
+message CancelOrderResponse {
+  bool success = 1;
+}
+
+// OrderService provides order management functionality
+service OrderService {
+  // CreateOrder creates a new order
+  rpc CreateOrder(CreateOrderRequest) returns (CreateOrderResponse) {
+    option (google.api.http) = {
+      post: "/v1/orders"
+      body: "*"
+    };
+  }
+
+  // GetOrder retrieves an order by ID
+  rpc GetOrder(GetOrderRequest) returns (GetOrderResponse) {
+    option (google.api.http) = {
+      get: "/v1/orders/{id}"
+    };
+  }
+
+  // ListOrders retrieves a list of orders
+  rpc ListOrders(ListOrdersRequest) returns (ListOrdersResponse) {
+    option (google.api.http) = {
+      get: "/v1/orders"
+    };
+  }
+
+  // UpdateOrderStatus updates the status of an order
+  rpc UpdateOrderStatus(UpdateOrderStatusRequest) returns (UpdateOrderStatusResponse) {
+    option (google.api.http) = {
+      put: "/v1/orders/{id}/status"
+      body: "*"
+    };
+  }
+
+  // CancelOrder cancels an order
+  rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse) {
+    option (google.api.http) = {
+      delete: "/v1/orders/{id}"
+    };
+  }
+}

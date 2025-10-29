@@ -1,0 +1,125 @@
+name: E2E Tests
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * *'  # Run daily at 2 AM UTC
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'cmd/**'
+      - 'pkg/**'
+      - 'tests/e2e/**'
+
+env:
+  GO_VERSION: 1.21
+
+jobs:
+  e2e-tests:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: monorepo_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Install dependencies
+      run: make deps
+
+    - name: Install tools
+      run: make tools
+
+    - name: Generate protobuf code
+      run: make proto
+
+    - name: Build services
+      run: make build
+
+    - name: Start services
+      run: |
+        # Start services in background
+        export DATABASE_HOST=localhost
+        export DATABASE_PORT=5432
+        export DATABASE_USER=postgres
+        export DATABASE_PASSWORD=postgres
+        export DATABASE_NAME=monorepo_test
+        export DATABASE_SSL_MODE=disable
+        
+        # Run migrations if needed
+        # make migrate
+        
+        # Start user service
+        ./bin/user-service &
+        USER_PID=$!
+        
+        # Start order service
+        ./bin/order-service &
+        ORDER_PID=$!
+        
+        # Start gateway
+        ./bin/gateway &
+        GATEWAY_PID=$!
+        
+        # Wait for services to be ready
+        sleep 10
+        
+        # Store PIDs for cleanup
+        echo $USER_PID > user.pid
+        echo $ORDER_PID > order.pid
+        echo $GATEWAY_PID > gateway.pid
+
+    - name: Run E2E tests
+      run: make test-e2e
+      env:
+        DATABASE_HOST: localhost
+        DATABASE_PORT: 5432
+        DATABASE_USER: postgres
+        DATABASE_PASSWORD: postgres
+        DATABASE_NAME: monorepo_test
+        DATABASE_SSL_MODE: disable
+
+    - name: Cleanup services
+      if: always()
+      run: |
+        if [ -f user.pid ]; then kill $(cat user.pid) || true; fi
+        if [ -f order.pid ]; then kill $(cat order.pid) || true; fi
+        if [ -f gateway.pid ]; then kill $(cat gateway.pid) || true; fi
+
+    - name: Upload test logs
+      if: failure()
+      uses: actions/upload-artifact@v3
+      with:
+        name: e2e-test-logs
+        path: |
+          *.log
+          logs/
+        retention-days: 7

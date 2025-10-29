@@ -1,0 +1,42 @@
+name: "Build Docker Image: CI Container"
+
+on:
+  schedule:
+    - cron: "0 0 * * *"  # Daily build
+  push:
+    branches:
+      - "main"
+      - "develop"
+    tags:
+      - "*.*.*"
+      - "v*.*.*"
+  pull_request:
+    paths:
+      - ".github/workflows/docker-ci-container.yml"
+      - ".github/workflows/_docker-build.yml"
+      - "dockers/ci/base/Dockerfile"
+      - "dockers/buildbase/Dockerfile"
+      - "versions/**"
+      - "Makefile"
+      - "Makefile.d/docker.mk"
+
+jobs:
+  build:
+    uses: "./.github/workflows/_docker-build.yml"
+    with:
+      target: "ci-container"
+      platforms: "linux/amd64,linux/arm64"
+      build-args: |
+        GO_VERSION=${{ github.event.inputs.go_version || '1.21.0' }}
+        GOLANGCI_LINT_VERSION=${{ github.event.inputs.golangci_lint_version || 'v1.55.2' }}
+        PROTOC_VERSION=${{ github.event.inputs.protoc_version || '24.4' }}
+        BUF_VERSION=${{ github.event.inputs.buf_version || '1.28.1' }}
+        KUBECTL_VERSION=${{ github.event.inputs.kubectl_version || '1.28.4' }}
+        DOCKER_VERSION=${{ github.event.inputs.docker_version || 'v24.0.7' }}
+    permissions:
+      contents: read
+      packages: write
+    secrets:
+      DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
+      DOCKERHUB_PASS: ${{ secrets.DOCKERHUB_PASS }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}

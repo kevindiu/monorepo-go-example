@@ -1,0 +1,177 @@
+{{/*
+Copyright (C) 2025 Kevin Diu <kevindiujp@gmail.com>
+
+Licensed under the Apache License, Version 2.0 (the "License");
+You may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+   https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/}}
+
+{{- if .Values.userService.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "monorepo-go-example.labels" . | nindent 4 }}
+    app: user-service
+    version: v1
+spec:
+  replicas: {{ .Values.userService.replicaCount }}
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+        version: v1
+      annotations:
+        {{- if .Values.monitoring.prometheus.enabled }}
+        prometheus.io/scrape: {{ .Values.monitoring.prometheus.scrape | quote }}
+        prometheus.io/port: {{ .Values.userService.service.httpPort | quote }}
+        prometheus.io/path: {{ .Values.monitoring.prometheus.path | quote }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "monorepo-go-example.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: user-service
+        image: {{ include "monorepo-go-example.image" (dict "Values" .Values "repository" .Values.userService.image.repository "tag" .Values.userService.image.tag) }}
+        imagePullPolicy: {{ .Values.userService.image.pullPolicy }}
+        ports:
+        - containerPort: {{ .Values.userService.service.httpPort }}
+          name: http
+          protocol: TCP
+        - containerPort: {{ .Values.userService.service.grpcPort }}
+          name: grpc
+          protocol: TCP
+        env:
+        - name: SERVER_HOST
+          value: "0.0.0.0"
+        - name: SERVER_PORT
+          value: {{ .Values.userService.service.httpPort | quote }}
+        - name: SERVER_GRPC_PORT
+          value: {{ .Values.userService.service.grpcPort | quote }}
+        - name: DATABASE_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "monorepo-go-example.fullname" . }}-config
+              key: database.host
+        - name: DATABASE_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "monorepo-go-example.fullname" . }}-config
+              key: database.port
+        - name: DATABASE_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "monorepo-go-example.fullname" . }}-config
+              key: database.name
+        - name: DATABASE_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "monorepo-go-example.fullname" . }}-secrets
+              key: database.user
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "monorepo-go-example.fullname" . }}-secrets
+              key: database.password
+        - name: DATABASE_SSL_MODE
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "monorepo-go-example.fullname" . }}-config
+              key: database.ssl_mode
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "monorepo-go-example.fullname" . }}-config
+              key: log.level
+        - name: LOG_FORMAT
+          valueFrom:
+            configMapKeyRef:
+              name: {{ include "monorepo-go-example.fullname" . }}-config
+              key: log.format
+        livenessProbe:
+          {{- toYaml .Values.userService.livenessProbe | nindent 10 }}
+        readinessProbe:
+          {{- toYaml .Values.userService.readinessProbe | nindent 10 }}
+        resources:
+          {{- toYaml .Values.userService.resources | nindent 10 }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "monorepo-go-example.labels" . | nindent 4 }}
+    app: user-service
+spec:
+  type: {{ .Values.userService.service.type }}
+  ports:
+  - port: {{ .Values.userService.service.httpPort }}
+    targetPort: {{ .Values.userService.service.httpPort }}
+    protocol: TCP
+    name: http
+  - port: {{ .Values.userService.service.grpcPort }}
+    targetPort: {{ .Values.userService.service.grpcPort }}
+    protocol: TCP
+    name: grpc
+  selector:
+    app: user-service
+{{- if .Values.userService.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: user-service-hpa
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "monorepo-go-example.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: user-service
+  minReplicas: {{ .Values.userService.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.userService.autoscaling.maxReplicas }}
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.userService.autoscaling.targetCPUUtilizationPercentage }}
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.userService.autoscaling.targetMemoryUtilizationPercentage }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,61 @@
+Thank you for installing {{ .Chart.Name }}!
+
+Your release is named {{ .Release.Name }}.
+
+To learn more about the release, try:
+
+  $ helm status {{ .Release.Name }} -n {{ .Values.namespace.name }}
+  $ helm get all {{ .Release.Name }} -n {{ .Values.namespace.name }}
+
+{{- if .Values.gateway.enabled }}
+
+Gateway Service:
+{{- if eq .Values.gateway.service.type "LoadBalancer" }}
+  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+  You can watch the status of by running:
+  
+    kubectl get svc gateway -n {{ .Values.namespace.name }} --watch
+
+  Once you have the EXTERNAL-IP, you can access the gateway at:
+  
+    export GATEWAY_IP=$(kubectl get svc gateway -n {{ .Values.namespace.name }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+    echo "Gateway HTTP: http://$GATEWAY_IP"
+    echo "Gateway gRPC: $GATEWAY_IP:{{ .Values.gateway.service.grpcPort }}"
+{{- else }}
+  The gateway service is available at:
+  
+    kubectl port-forward svc/gateway 8080:{{ .Values.gateway.service.httpPort }} -n {{ .Values.namespace.name }}
+    
+  Then access at: http://localhost:8080
+{{- end }}
+{{- end }}
+
+{{- if .Values.ingress.enabled }}
+
+Ingress:
+  The application is available at:
+  {{- range .Values.ingress.hosts }}
+    - https://{{ .host }}
+  {{- end }}
+{{- end }}
+
+Services:
+{{- if .Values.userService.enabled }}
+  - User Service: user-service:{{ .Values.userService.service.httpPort }} (HTTP), user-service:{{ .Values.userService.service.grpcPort }} (gRPC)
+{{- end }}
+{{- if .Values.orderService.enabled }}
+  - Order Service: order-service:{{ .Values.orderService.service.httpPort }} (HTTP), order-service:{{ .Values.orderService.service.grpcPort }} (gRPC)
+{{- end }}
+{{- if .Values.postgresql.enabled }}
+  - PostgreSQL: postgres-service:{{ .Values.postgresql.service.port }}
+{{- end }}
+
+Monitoring:
+{{- if .Values.monitoring.prometheus.enabled }}
+  Prometheus metrics are available on each service at {{ .Values.monitoring.prometheus.path }}
+{{- end }}
+
+Documentation:
+  For more information, visit: https://github.com/kevindiu/monorepo-go-example
+
+Happy coding!

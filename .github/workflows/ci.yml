@@ -1,0 +1,301 @@
+name: "CI Pipeline"
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: write
+
+env:
+  GO_VERSION: 1.21.0
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/kevindiu/monorepo-go-example-ci-container:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run unit tests
+        run: make test-unit
+
+      - name: Generate coverage report
+        run: |
+          go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+          go tool cover -html=coverage.out -o coverage.html
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.out
+          flags: unittests
+          name: codecov-umbrella
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/kevindiu/monorepo-go-example-ci-container:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    services:
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: monorepo_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run integration tests
+        run: make test-integration
+        env:
+          DATABASE_URL: postgres://postgres:postgres@postgres:5432/monorepo_test?sslmode=disable
+
+  lint:
+    name: Lint & Code Quality
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/kevindiu/monorepo-go-example-ci-container:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run golangci-lint
+        run: make lint
+
+      - name: Run go vet
+        run: make vet
+
+      - name: Check formatting
+        run: |
+          if [ -n "$(gofmt -s -l .)" ]; then
+            echo "Go code is not formatted:"
+            gofmt -s -d .
+            exit 1
+          fi
+
+  proto-check:
+    name: Protocol Buffers Check
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/kevindiu/monorepo-go-example-ci-container:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate proto files
+        run: buf lint
+
+      - name: Check proto breaking changes
+        if: github.event_name == 'pull_request'
+        run: buf breaking --against '.git#branch=main'
+
+      - name: Generate proto code
+        run: make proto
+
+      - name: Check for uncommitted changes
+        run: |
+          if ! git diff --quiet; then
+            echo "Generated proto files are out of date. Please run 'make proto' and commit."
+            git diff
+            exit 1
+          fi
+
+  build:
+    name: Build Services
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests, lint]
+    container:
+      image: ghcr.io/kevindiu/monorepo-go-example-ci-container:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    strategy:
+      matrix:
+        service: [user-service, order-service, gateway]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Build ${{ matrix.service }}
+        run: make build-${{ matrix.service }}
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.service }}-binary
+          path: bin/${{ matrix.service }}
+
+  docker-build:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+    
+    strategy:
+      matrix:
+        target: [user-service, config-service]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ${{ matrix.target }}
+        uses: ./.github/workflows/_docker-build.yml
+        with:
+          target: ${{ matrix.target }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: [build]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests, lint, proto-check, build, docker-build, security-scan]
+    if: always()
+    
+    steps:
+      - name: Check job statuses
+        run: |
+          echo "Unit Tests: ${{ needs.unit-tests.result }}"
+          echo "Integration Tests: ${{ needs.integration-tests.result }}"
+          echo "Lint: ${{ needs.lint.result }}"
+          echo "Proto Check: ${{ needs.proto-check.result }}"
+          echo "Build: ${{ needs.build.result }}"
+          echo "Docker Build: ${{ needs.docker-build.result }}"
+          echo "Security Scan: ${{ needs.security-scan.result }}"
+          
+          if [ "${{ needs.unit-tests.result }}" != "success" ] || \
+             [ "${{ needs.integration-tests.result }}" != "success" ] || \
+             [ "${{ needs.lint.result }}" != "success" ] || \
+             [ "${{ needs.proto-check.result }}" != "success" ] || \
+             [ "${{ needs.build.result }}" != "success" ]; then
+            echo "CI Pipeline failed!"
+            exit 1
+          fi
+          
+          echo "CI Pipeline succeeded!"
